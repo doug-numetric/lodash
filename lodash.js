@@ -1526,6 +1526,9 @@
         symbolValueOf = symbolProto ? symbolProto.valueOf : undefined,
         symbolToString = symbolProto ? symbolProto.toString : undefined;
 
+    /** Used to mark the point where a literalMerge changes to an assign */
+    var symLiteral = Symbol('lodash.literal'),
+        symLiteralUnset = Object.defineProperty({}, symLiteral, { value: true });
     /*------------------------------------------------------------------------*/
 
     /**
@@ -3611,6 +3614,43 @@
             newValue = srcValue;
           }
           assignMergeValue(object, key, newValue);
+        }
+      }, keysIn);
+    }
+
+    /**
+     * The base implementation of `_.literalMerge` without support for multiple sources.
+     *
+     * @private
+     * @param {Object} object The destination object.
+     * @param {Object} source The source object.
+     * @param {number} srcIndex The index of `source`.
+     * @param {Function} [customizer] The function to customize merged values.
+     * @param {Object} [stack] Tracks traversed source values and their merged
+     *  counterparts.
+     */
+    function baseLiteralMerge(object, source, srcIndex, customizer, stack) {
+      if (object === source) {
+        return;
+      }
+      baseFor(source, function(srcValue, key) {
+        if (isObject(srcValue) && srcValue[symLiteral] !== true) {
+          stack || (stack = new Stack);
+          baseMergeDeep(object, source, key, srcIndex, baseLiteralMerge, customizer, stack);
+        }
+        else {
+          var newValue = customizer
+            ? customizer(safeGet(object, key), srcValue, (key + ''), object, source, stack)
+            : undefined;
+
+          if (newValue === undefined) {
+            newValue = srcValue;
+          }
+          if (srcValue === symLiteralUnset) {
+            baseUnset(object, key);
+          } else {
+            assignMergeValue(object, key, newValue);
+          }
         }
       }, keysIn);
     }
@@ -6809,6 +6849,58 @@
       return result;
     }
 
+    /**
+     * Creates a clone of `object` with an additional non-enumerable literal
+     * symbol property.
+     *
+     * @private
+     * @param {{Object}|undefined} object the object to clone and tag as a literal
+     * @returns {Object} Returns the literal wrapped clone of `object`
+     */
+    function literal(object) {
+      if (isUndefined(object)) {
+        return symLiteralUnset;
+      }
+      if (isObject(object)) {
+        return assign(Object.defineProperty({}, symLiteral, { value: true }), object);
+      }
+      throw new TypeError('Expected an object');
+    }
+
+    /**
+     * This method is like `_.merge` except that it recognizes a `_.literal`
+     * wrapped object to stop recursively merging own and inherited enumerable
+     * string keyed properties of source objects into the destination object
+     * (ie treating the `_.literal` wrapped object as a single value).
+     * Source properties that resolve to `undefined` are skipped if a destination
+     * value exists and source properties that resolve to `_.literal(undefined)`
+     * case the destination value to be deleted. Array and plain object properties
+     * are merged recursively. Other objects and value types are overridden by
+     * assignment. Source objects are applied from left to right. Subsequent
+     * sources overwrite property assignments of previous sources.
+     *
+     * **Note:** This method mutates `object`.
+     *
+     * @private
+     * @param {Object} object The destination object.
+     * @param {...Object} [sources] The source objects.
+     * @returns {Object} Returns `object`.
+     * @example
+     *
+     * var object = {
+     *   'a': [{ 'b': 2 }, { 'd': 4 }, { 'f': 6 }]
+     * };
+     *
+     * var other = {
+     *   'a': [{ 'c': 3 }, { 'd': _.literal() }, _.literal({ 'g': 7 })]
+     * };
+     *
+     * _.merge(object, other);
+     * // => { 'a': [{ 'b': 2, 'c': 3 }, { }, { g: 7 }] }
+     */
+    var literalMerge = createAssigner(function(object, source, srcIndex) {
+      baseLiteralMerge(object, source, srcIndex);
+    });
     /*------------------------------------------------------------------------*/
 
     /**
@@ -16828,6 +16920,10 @@
     lodash.each = forEach;
     lodash.eachRight = forEachRight;
     lodash.first = head;
+
+    // Add extensions
+    lodash._literal = literal;
+    lodash._literalMerge = literalMerge;
 
     mixin(lodash, (function() {
       var source = {};
